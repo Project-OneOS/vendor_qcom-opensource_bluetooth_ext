@@ -61,6 +61,10 @@ class BrowsedMediaPlayer_ext {
     private static final int BROWSED_FOLDER_ID_INDEX = 4;
     private static final String[] ROOT_FOLDER = {"root"};
     private static boolean mPlayerRoot = false;
+
+    private boolean mNeedToSendGetFolderItem = false;
+    private MediaBrowser mTempMediaBrowser = null;
+
     /*  package and service name of target Media Player which is set for browsing */
     private String mPackageName;
     private String mConnectingPackageName;
@@ -166,6 +170,8 @@ class BrowsedMediaPlayer_ext {
                 mHandler.removeMessages(MSG_TIMEOUT, mCallbackPackageName);
                 Message msg = mHandler.obtainMessage(MSG_DISCONNECT_PLAYER, 0, 0, mBrowser);
                 mHandler.sendMessage(msg);
+                mBrowser = null;
+                return;
             }
             mConnState = CONNECTED;
             Log.d(TAG, "mediaBrowser CONNECTED to " + mPackageName);
@@ -182,8 +188,11 @@ class BrowsedMediaPlayer_ext {
             if ((mHandler != null) && !mBrowsablePlayerList.contains(mCallbackPackageName)
                     && mHandler.hasMessages(MSG_TIMEOUT, mCallbackPackageName)) {
                 mHandler.removeMessages(MSG_TIMEOUT, mCallbackPackageName);
+                mBrowser = null;
+                return;
             }
             mConnState = DISCONNECTED;
+            mTempMediaBrowser = null;
             // Remove what could be a circular dependency causing GC to never happen on this object
             mBrowser = null;
             Log.e(TAG, "mediaBrowser Connection failed with " + mPackageName
@@ -198,8 +207,11 @@ class BrowsedMediaPlayer_ext {
             if ((mHandler != null) && !mBrowsablePlayerList.contains(mCallbackPackageName)
                     && mHandler.hasMessages(MSG_TIMEOUT, mCallbackPackageName)) {
                 mHandler.removeMessages(MSG_TIMEOUT, mCallbackPackageName);
+                mBrowser = null;
+                return;
             }
             mBrowser = null;
+            mTempMediaBrowser = null;
             mConnState = SUSPENDED;
             Log.e(TAG, "mediaBrowser SUSPENDED connection with " + mPackageName);
         }
@@ -216,18 +228,16 @@ class BrowsedMediaPlayer_ext {
                         Log.d(TAG, "OnChildren Loaded folder items: childrens= " + children.size());
                     }
 
-            /*
-             * cache current folder items and send as rsp when remote requests
-             * get_folder_items (scope = vfs)
-             */
+                    /*
+                     * cache current folder items and send as rsp when remote requests
+                     * get_folder_items (scope = vfs)
+                     */
                     if (mFolderItems == null) {
-                        if (DEBUG) {
-                            Log.d(TAG, "sending setbrowsed player rsp");
-                        }
                         Log.w(TAG, "sending setbrowsed player rsp");
                         mFolderItems = children;
                         mMediaInterface.setBrowsedPlayerRsp(mBDAddr, AvrcpConstants_ext.RSP_NO_ERROR,
                                 (byte) 0x00, children.size(), ROOT_FOLDER);
+                        RespondPendingGetFolderItemsVFS();
                     } else {
                         mFolderItems = children;
                         mCurrFolderNumItems = mFolderItems.size();
@@ -241,6 +251,7 @@ class BrowsedMediaPlayer_ext {
                 /* UID is invalid */
                 @Override
                 public void onError(String id) {
+                    RespondPendingGetFolderItemsVFS();
                     Log.e(TAG, "set browsed player rsp. Could not get root folder items");
                     mMediaInterface.setBrowsedPlayerRsp(mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR,
                             (byte) 0x00, 0, null);
@@ -365,6 +376,7 @@ class BrowsedMediaPlayer_ext {
                     "we aren't connecting to " + connectedPackage);
             mMediaInterface.setBrowsedPlayerRsp(
                     mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR, (byte) 0x00, 0, null);
+            RespondPendingGetFolderItemsVFS();
             return;
         }
         mConnectingPackageName = null;
@@ -373,6 +385,7 @@ class BrowsedMediaPlayer_ext {
             Log.e(TAG, "onBrowseConnect: received a null browser for " + connectedPackage);
             mMediaInterface.setBrowsedPlayerRsp(mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR,
                     (byte) 0x00, 0, null);
+            RespondPendingGetFolderItemsVFS();
             return;
         }
 
@@ -399,6 +412,7 @@ class BrowsedMediaPlayer_ext {
                         Log.e(TAG, "onBrowseConnect: root value is empty or null");
                         mMediaInterface.setBrowsedPlayerRsp(
                                 mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR, (byte) 0x00, 0, null);
+                        RespondPendingGetFolderItemsVFS();
                         return;
                     }
 
@@ -434,6 +448,7 @@ class BrowsedMediaPlayer_ext {
             ex.printStackTrace();
         }
 
+        RespondPendingGetFolderItemsVFS();
         mMediaInterface.setBrowsedPlayerRsp(mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR, (byte) 0x00,
                 0, null);
     }
@@ -462,6 +477,7 @@ class BrowsedMediaPlayer_ext {
            MediaConnectionCallback callback = new MediaConnectionCallback(packageName);
            MediaBrowser tempBrowser = new MediaBrowser(
                    mContext, new ComponentName(packageName, mClassName), callback, null);
+           mTempMediaBrowser = tempBrowser;
            callback.setBrowser(tempBrowser);
            tempBrowser.connect();
         } else if (mFolderItems != null) {
@@ -564,13 +580,15 @@ class BrowsedMediaPlayer_ext {
             Log.w(TAG, "Already in MBS List don't reconnect" + mBrowsablePlayerList);
             return;
         }
-        Message msg = mHandler.obtainMessage(MSG_CONNECT_PLAYER);
-        Bundle data = new Bundle();
-        data.putCharSequence("package", packageName);
-        data.putCharSequence("class", cls);
-        msg.setData(data);
-        mHandler.sendMessage(msg);
-        Log.w(TAG, "Exit MSG_CONNECT_PLAYER for package = " + packageName);
+        if (mHandler != null) {
+            Message msg = mHandler.obtainMessage(MSG_CONNECT_PLAYER);
+            Bundle data = new Bundle();
+            data.putCharSequence("package", packageName);
+            data.putCharSequence("class", cls);
+            msg.setData(data);
+            mHandler.sendMessage(msg);
+            Log.w(TAG, "Exit MSG_CONNECT_PLAYER for package = " + packageName);
+        }
     }
 
     public boolean isPackageInMBSList(String packageName) {
@@ -805,17 +823,22 @@ class BrowsedMediaPlayer_ext {
             TryReconnectBrowse(mCurrentBrowsePackage, mCurrentBrowseClass);
         }
 
-        if (mFolderItems == null) {
+        if (mFolderItems == null && mTempMediaBrowser == null) {
             /* Failed to fetch folder items from media player. Send error to remote device */
             Log.e(TAG, "Failed to fetch folder items during getFolderItemsVFS");
             mMediaInterface.folderItemsRsp(mBDAddr, AvrcpConstants_ext.RSP_INTERNAL_ERR, null);
             return;
         }
 
-        /* Filter attributes based on the request and send response to remote device */
-        getFolderItemsFilterAttr(mBDAddr, reqObj, mFolderItems,
-                AvrcpConstants_ext.BTRC_SCOPE_FILE_SYSTEM, mFolderItemsReqObj.mStartItem,
-                mFolderItemsReqObj.mEndItem);
+        if (mFolderItems != null) {
+            /* Filter attributes based on the request and send response to remote device */
+            getFolderItemsFilterAttr(mBDAddr, reqObj, mFolderItems,
+                    AvrcpConstants_ext.BTRC_SCOPE_FILE_SYSTEM, mFolderItemsReqObj.mStartItem,
+                    mFolderItemsReqObj.mEndItem);
+        } else {
+            mNeedToSendGetFolderItem = true;
+            Log.w(TAG, "Need to send getFolderItemsVFS after obtaing VFS");
+        }
     }
 
     /* Instructs media player to play particular media item */
@@ -1070,6 +1093,17 @@ class BrowsedMediaPlayer_ext {
     }
 
     /* Helper methods */
+
+    private void RespondPendingGetFolderItemsVFS() {
+        if (mNeedToSendGetFolderItem) {
+            Log.w(TAG, "send pending get foler item rsp");
+            mNeedToSendGetFolderItem = false;
+            getFolderItemsFilterAttr(mBDAddr, mFolderItemsReqObj, mFolderItems,
+                    AvrcpConstants_ext.BTRC_SCOPE_FILE_SYSTEM,
+                    mFolderItemsReqObj.mStartItem, mFolderItemsReqObj.mEndItem);
+        }
+        mTempMediaBrowser = null;
+    }
 
     /* check if item is browsable Down*/
     private boolean isBrowsableFolderDn(String uid) {

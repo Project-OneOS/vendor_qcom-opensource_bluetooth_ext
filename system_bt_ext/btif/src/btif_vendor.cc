@@ -91,6 +91,7 @@
 #define BTA_SERVICE_ID_TO_SERVICE_MASK(id)  ((tBTA_SERVICE_MASK)1 << (id))
 #define CALLBACK_TIMER_PERIOD_MS      (60000)
 #define BTIF_VENDOR_BREDR_CLEANUP 1
+#define BTIF_VENDOR_HCI_CLOSE 2
 
 typedef struct {
   RawAddress bd_addr; /* BD address peer device. */
@@ -173,6 +174,10 @@ static void btif_vendor_bredr_cleanup_event(uint16_t event, char *p_param)
     HAL_CBACK(bt_vendor_callbacks, bredr_cleanup_cb, true);
 }
 
+static void btif_vendor_hci_close_event(uint16_t event, char *p_param)
+{
+    btif_hci_close();
+}
 static void btif_vendor_send_iot_info_cb(uint16_t event, char *p_param)
 {
     broadcast_cb_data.is_valid = false;
@@ -354,7 +359,8 @@ static void bredrcleanup(void)
 static void hciclose(void)
 {
     LOG_INFO(LOG_TAG,"hciclose");
-    btif_hci_close();
+    btif_transfer_context(btif_vendor_hci_close_event,BTIF_VENDOR_HCI_CLOSE,
+                          NULL, 0, NULL);
 }
 
 
@@ -459,6 +465,112 @@ bt_status_t voip_network_type_wifi(bthf_voip_state_t isVoipStarted,
 
 /*******************************************************************************
 **
+** Function         clock_sync_cback
+**
+** Description      callback function for set_clock_sync_config and start_clock_sync
+**
+** Returns          None
+**
+*******************************************************************************/
+static void clock_sync_cback(tBTM_VSC_CMPL *param)
+{
+    CHECK(param->param_len > 1);
+
+    BTIF_TRACE_DEBUG("%s: opcode=%x, subopcode=%x, status=%d",
+        __func__, param->opcode, param->p_param_buf[1], param->p_param_buf[0]);
+}
+
+/*******************************************************************************
+**
+** Function         set_clock_sync_config
+**
+** Description      Enable/Disable clock sync protocol and config clock sync paramters
+**
+**                  enable        : 0 - disable, 1 -enable
+**                  mode          : 0x00 - GPIO sync, 0x01 - VSC sync
+**                  adv_internal  : advertising interval, 0xA0 ~ 0x4000
+**                  channel       : BIT0: channel 37, BIT1: channel 38, BIT2: channel 39
+**                  jitter        : 0~8, 0 - random jitter, other - (jitter-1)*1.25
+**                  offset        : -32768~32767us, timing between sync pulse and advert,
+**                                  Positive value move the sync edge close to the advert
+**                                  and therefore make the offset smaller.
+**
+** Return           None
+**
+*******************************************************************************/
+static bool set_clock_sync_config(bool enable, int mode, int adv_interval,
+    int channel, int jitter, int offset)
+{
+    uint16_t opcode = 0xfc35;
+    uint8_t cmdbuf[128], *ptr = cmdbuf;
+    uint32_t cmdlen = 0;
+
+    BTIF_TRACE_DEBUG("%s", __func__);
+    if (mode != 0 && mode != 1) {
+      BTIF_TRACE_DEBUG("%s: invalid mode %d", __func__, mode);
+      return false;
+    }
+
+    *ptr++ = (uint8_t)0; // subcode
+    cmdlen ++;
+
+    *ptr++ = (uint8_t) enable;  // enable
+    cmdlen ++;
+
+    *ptr++ = (uint8_t) mode;  // mode - 00: GPIO, 1: VSC
+    cmdlen ++;
+
+    if (adv_interval < 0xa0)
+      adv_interval = 0xa0;
+    if (adv_interval > 0x4000)
+      adv_interval = 0x4000;
+    *(uint16_t *)ptr = (uint16_t) adv_interval; // advertise interval
+    ptr +=2;
+    cmdlen += 2;
+
+    channel &= 0x7;
+    *ptr++ = (uint8_t) channel; // channel
+    cmdlen ++;
+
+    if (jitter < 0)
+      jitter = 0;
+    if (jitter > 8)
+      jitter = 8;
+    *ptr++ = (uint8_t) jitter;  // jitter
+    cmdlen ++;
+
+    if (offset < -32768)
+      offset = -32768;
+    if (offset > 32767)
+      offset = 32767;
+    *(uint16_t *)ptr = (uint16_t) offset; // offset
+    ptr += 2;
+    cmdlen += 2;
+
+    BTM_VendorSpecificCommand(opcode, cmdlen, cmdbuf, clock_sync_cback);
+    return true;
+}
+
+/*******************************************************************************
+**
+** Function         start_clock_sync
+**
+** Description      start clock sync
+**
+** Return           None
+**
+*******************************************************************************/
+static void start_clock_sync(void)
+{
+    uint16_t opcode = 0xfc35;
+    uint8_t cmdbuf[] = {0x01}; // subcode
+
+    BTIF_TRACE_DEBUG("%s", __func__);
+    BTM_VendorSpecificCommand(opcode, 1, cmdbuf, clock_sync_cback);
+}
+
+/*******************************************************************************
+**
 ** Function         get_testapp_interface
 **
 ** Description      Get the Test interface
@@ -509,6 +621,8 @@ static const btvendor_interface_t btvendorInterface = {
     cleanup,
     voip_network_type_wifi,
     hciclose,
+    set_clock_sync_config,
+    start_clock_sync,
 };
 
 /*******************************************************************************

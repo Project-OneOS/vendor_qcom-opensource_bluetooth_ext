@@ -60,10 +60,6 @@
 
 #if (TWS_AG_ENABLED == TRUE)
 
-#ifndef BTA_AG_SCO_DEBUG
-#define BTA_AG_SCO_DEBUG FALSE
-#endif
-
 void send_twsp_esco_setup (const RawAddress& left_eb_addr, const RawAddress& rght_eb_addr,
     uint8_t selected_mic);
 void print_bdaddr(const RawAddress& addr);
@@ -198,13 +194,11 @@ void bta_ag_twsp_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
    //PONTING TO SECONDARY sco cb
    tBTA_AG_SCO_CB* p_sco = &bta_ag_cb.twsp_sec_sco;
    tBTA_AG_SCB *other_scb = NULL;
-#if (BTA_AG_SCO_DEBUG == TRUE)
    uint8_t in_state = p_sco->state;
-#endif
-   APPL_TRACE_EVENT("%s: SCO Index 0x%04x, State %d, Event %d", __func__,
+   APPL_TRACE_IMP("%s: SCO Index 0x%04x, State %d, Event %d", __func__,
                      p_scb->sco_idx, p_sco->state, event);
 
-   APPL_TRACE_EVENT("%s: TWS+ peer p_scb: %x", __func__, p_scb);
+   APPL_TRACE_IMP("%s: TWS+ peer p_scb: %x", __func__, p_scb);
 
    switch (p_sco->state) {
        case BTA_AG_SCO_SHUTDOWN_ST:
@@ -308,7 +302,8 @@ void bta_ag_twsp_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
                 p_sco->state = BTA_AG_SCO_OPEN_ST;
                 other_scb = get_other_twsp_scb((p_scb->peer_addr));
                 if (other_scb && twsp_sco_active(other_scb) == false &&
-                        get_twsp_state(other_scb) == TWSPLUS_EB_STATE_INEAR) {
+                        get_twsp_state(other_scb) != TWSPLUS_EB_STATE_OUT_OF_EAR &&
+                        get_twsp_state(other_scb) != TWSPLUS_EB_STATE_INCASE) {
                     APPL_TRACE_WARNING("Calling SCO open");
                     dispatch_event_primary_peer_device(p_scb, BTA_AG_SCO_OPEN_E);
                 }
@@ -319,7 +314,8 @@ void bta_ag_twsp_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
                 p_sco->state = BTA_AG_SCO_LISTEN_ST;
                 other_scb = get_other_twsp_scb((p_scb->peer_addr));
                 if (other_scb && twsp_sco_active(other_scb) == false &&
-                     get_twsp_state(other_scb) == TWSPLUS_EB_STATE_INEAR) {
+                        get_twsp_state(other_scb) != TWSPLUS_EB_STATE_OUT_OF_EAR &&
+                        get_twsp_state(other_scb) != TWSPLUS_EB_STATE_INCASE) {
                     //Atleast try bringing up the other EB eSCO
                     APPL_TRACE_WARNING("Calling SCO open for other EB");
                     dispatch_event_primary_peer_device(p_scb, BTA_AG_SCO_OPEN_E);
@@ -486,14 +482,12 @@ void bta_ag_twsp_sco_event(tBTA_AG_SCB* p_scb, uint8_t event) {
     default:
       break;
   }
-#if (BTA_AG_SCO_DEBUG == TRUE)
   if (p_sco->state != in_state) {
-    APPL_TRACE_EVENT("BTA AG TWS SCO State Change: [%s] -> [%s] after Event [%s]",
+    APPL_TRACE_IMP("BTA AG TWS SCO State Change: [%s] -> [%s] after Event [%s]",
                      bta_ag_sco_state_str(in_state),
                      bta_ag_sco_state_str(p_sco->state),
                      bta_ag_sco_evt_str(event));
   }
-#endif
 }
 
 void print_bdaddr(const RawAddress& addr) {
